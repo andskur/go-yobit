@@ -29,16 +29,17 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/ikonovalov/go-cloudflare-scraper"
 	"io/ioutil"
 	"log"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
-	"os"
+
+	"github.com/ikonovalov/go-cloudflare-scraper"
 )
 
 const (
@@ -55,6 +56,7 @@ type Yobit struct {
 	pairs      map[string]PairInfo
 	mutex      sync.Mutex
 	store      *LocalStorage
+	logger     bool
 }
 
 func fatal(v ...interface{}) {
@@ -62,7 +64,7 @@ func fatal(v ...interface{}) {
 	os.Exit(1)
 }
 
-func New(credential ApiCredential) *Yobit {
+func New(credential ApiCredential, logger bool) *Yobit {
 	cloudflare, err := scraper.NewTransport(http.DefaultTransport)
 	if err != nil {
 		fatal(err)
@@ -75,6 +77,7 @@ func New(credential ApiCredential) *Yobit {
 		client:     &http.Client{Transport: cloudflare, Jar: cloudflare.Cookies, Timeout: time.Second * 10},
 		credential: &credential,
 		store:      NewStorage(),
+		logger:     logger,
 	}
 	yobit.LoadCookies()
 	yobit.PassCloudflare()
@@ -134,7 +137,9 @@ func (y *Yobit) Tickers24(pairs []string, ch chan<- TickerInfoResponse) {
 		fatal(err)
 	}
 	elapsed := time.Since(start)
-	log.Printf("Yobit.Tickers24 took %s", elapsed)
+	if y.logger {
+		log.Printf("Yobit.Tickers24 took %s", elapsed)
+	}
 	ch <- tickerResponse
 }
 
@@ -164,7 +169,9 @@ func (y *Yobit) DepthLimited(pairs string, limit int, ch chan<- DepthResponse) {
 	limitedDepthUrl := fmt.Sprintf("%s/depth/%s?limit=%d", apiBase+ApiVersion, pairs, limit)
 	response := y.callPublic(limitedDepthUrl)
 	elapsed := time.Since(start)
-	log.Printf("Yobit.Depth took %s", elapsed)
+	if y.logger {
+		log.Printf("Yobit.Depth took %s", elapsed)
+	}
 	var depthResponse DepthResponse
 	if err := unmarshal(response, &depthResponse.Offers); err != nil {
 		fatal(err)
@@ -181,7 +188,9 @@ func (y *Yobit) TradesLimited(pairs string, limit int, ch chan<- TradesResponse)
 		fatal(err)
 	}
 	elapsed := time.Since(start)
-	log.Printf("Yobit.Trades took %s", elapsed)
+	if y.logger {
+		log.Printf("Yobit.Trades took %s", elapsed)
+	}
 	ch <- tradesResponse
 }
 
@@ -191,7 +200,9 @@ func (y *Yobit) GetInfo(ch chan<- GetInfoResponse) {
 	start := time.Now()
 	response := y.callPrivate("getInfo")
 	elapsed := time.Since(start)
-	log.Printf("Yobit.GetInfo took %s", elapsed)
+	if y.logger {
+		log.Printf("Yobit.GetInfo took %s", elapsed)
+	}
 	var getInfoResp GetInfoResponse
 	if err := unmarshal(response, &getInfoResp); err != nil {
 		fatal(err)
@@ -206,7 +217,9 @@ func (y *Yobit) ActiveOrders(pair string, ch chan<- ActiveOrdersResponse) {
 	start := time.Now()
 	response := y.callPrivate("ActiveOrders", CallArg{"pair", pair})
 	elapsed := time.Since(start)
-	log.Printf("Yobit.ActiveOrders took %s", elapsed)
+	if y.logger {
+		log.Printf("Yobit.ActiveOrders took %s", elapsed)
+	}
 	var activeOrders ActiveOrdersResponse
 	if err := unmarshal(response, &activeOrders); err != nil {
 		fatal(err)
@@ -221,7 +234,9 @@ func (y *Yobit) OrderInfo(orderId string, ch chan<- OrderInfoResponse) {
 	start := time.Now()
 	response := y.callPrivate("OrderInfo", CallArg{"order_id", orderId})
 	elapsed := time.Since(start)
-	log.Printf("Yobit.OrderInfo took %s", elapsed)
+	if y.logger {
+		log.Printf("Yobit.OrderInfo took %s", elapsed)
+	}
 	var orderInfo OrderInfoResponse
 	if err := unmarshal(response, &orderInfo); err != nil {
 		fatal(err)
@@ -241,7 +256,9 @@ func (y *Yobit) Trade(pair string, tradeType string, rate float64, amount float6
 		CallArg{"amount", strconv.FormatFloat(amount, 'f', 8, 64)},
 	)
 	elapsed := time.Since(start)
-	log.Printf("Yobit.Trade took %s", elapsed)
+	if y.logger {
+		log.Printf("Yobit.Trade took %s", elapsed)
+	}
 	var tradeResponse TradeResponse
 	if err := unmarshal(response, &tradeResponse); err != nil {
 		fatal(err)
@@ -256,7 +273,9 @@ func (y *Yobit) CancelOrder(orderId string, ch chan CancelOrderResponse) {
 	start := time.Now()
 	response := y.callPrivate("CancelOrder", CallArg{"order_id", orderId})
 	elapsed := time.Since(start)
-	log.Printf("Yobit.CancelOrder took %s", elapsed)
+	if y.logger {
+		log.Printf("Yobit.CancelOrder took %s", elapsed)
+	}
 	var cancelResponse CancelOrderResponse
 	if err := unmarshal(response, &cancelResponse); err != nil {
 		fatal(err)

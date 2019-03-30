@@ -28,19 +28,15 @@ import (
 	"crypto/hmac"
 	"crypto/sha512"
 	"encoding/hex"
-	"io/ioutil"
 	"fmt"
+	"io/ioutil"
 	"os"
 	"strconv"
 )
 
 const (
-	nonceFile      = "data/nonce"
+	nonceFile = "data/nonce"
 )
-
-
-
-
 
 func (y *Yobit) GetAndIncrementNonce() (nonce uint64) {
 	y.mutex.Lock()

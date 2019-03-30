@@ -25,11 +25,12 @@
 package yobit
 
 import (
-	"encoding/gob"
 	"bytes"
-	"github.com/syndtr/goleveldb/leveldb"
-	"net/url"
+	"encoding/gob"
 	"net/http"
+	"net/url"
+
+	"github.com/syndtr/goleveldb/leveldb"
 )
 
 type LocalStorage struct {
