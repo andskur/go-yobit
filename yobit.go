@@ -148,7 +148,9 @@ func (y *Yobit) Info(ch chan<- InfoResponse) {
 	infoUrl := apiBase + ApiVersion + "/info"
 	response := y.callPublic(infoUrl)
 	elapsed := time.Since(start)
-	log.Printf("Yobit.Info took %s", elapsed)
+	if y.logger {
+		log.Printf("Yobit.Info took %s", elapsed)
+	}
 
 	var infoResponse InfoResponse
 	if err := unmarshal(response, &infoResponse); err != nil {
