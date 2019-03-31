@@ -122,44 +122,48 @@ func (y *Yobit) fee(market string) float64 {
 
 func (y *Yobit) PassCloudflare() {
 	channel := make(chan InfoResponse)
-	go y.Info(channel)
+	errChannel := make(chan error)
+	go y.Info(channel, errChannel)
 	<-channel
 }
 
 // PUBLIC API ===============================
 
-func (y *Yobit) Tickers24(pairs []string, ch chan<- TickerInfoResponse) error {
+func (y *Yobit) Tickers24(pairs []string, ch chan<- TickerInfoResponse, errCh chan<- error) {
 	if len(pairs) == 0 {
-		return errTicketEmpty
+		errCh <- errTicketEmpty
+		return
 	}
 	pairsLine := strings.Join(pairs, "-")
 	start := time.Now()
 	ticker24Url := apiBase + ApiVersion + "/ticker/" + pairsLine
 	response, err := y.callPublic(ticker24Url)
 	if err != nil {
-		return err
+		errCh <- err
+		return
 	}
 
 	var tickerResponse TickerInfoResponse
 	pTicker := &tickerResponse.Tickers
 
 	if err := unmarshal(response, pTicker); err != nil {
-		return err
+		errCh <- err
+		return
 	}
 	if y.logger {
 		elapsed := time.Since(start)
 		log.Printf("Yobit.Tickers24 took %s", elapsed)
 	}
 	ch <- tickerResponse
-	return nil
 }
 
-func (y *Yobit) Info(ch chan<- InfoResponse) error {
+func (y *Yobit) Info(ch chan<- InfoResponse, errCh chan<- error) {
 	start := time.Now()
 	infoUrl := apiBase + ApiVersion + "/info"
 	response, err := y.callPublic(infoUrl)
 	if err != nil {
-		return err
+		errCh <- err
+		return
 	}
 
 	if y.logger {
@@ -169,26 +173,26 @@ func (y *Yobit) Info(ch chan<- InfoResponse) error {
 
 	var infoResponse InfoResponse
 	if err := unmarshal(response, &infoResponse); err != nil {
-		return err
+		errCh <- err
+		return
 	}
 	// cache all markets
 	y.pairs = infoResponse.Pairs
 
 	ch <- infoResponse
-	return nil
 }
 
-func (y *Yobit) Depth(pairs string, ch chan<- DepthResponse) (err error) {
-	err = y.DepthLimited(pairs, 150, ch)
-	return
+func (y *Yobit) Depth(pairs string, ch chan<- DepthResponse, errCh chan<- error) {
+	y.DepthLimited(pairs, 150, ch, errCh)
 }
 
-func (y *Yobit) DepthLimited(pairs string, limit int, ch chan<- DepthResponse) error {
+func (y *Yobit) DepthLimited(pairs string, limit int, ch chan<- DepthResponse, errCh chan<- error) {
 	start := time.Now()
 	limitedDepthUrl := fmt.Sprintf("%s/depth/%s?limit=%d", apiBase+ApiVersion, pairs, limit)
 	response, err := y.callPublic(limitedDepthUrl)
 	if err != nil {
-		return err
+		errCh <- err
+		return
 	}
 
 	if y.logger {
@@ -197,39 +201,41 @@ func (y *Yobit) DepthLimited(pairs string, limit int, ch chan<- DepthResponse) e
 	}
 	var depthResponse DepthResponse
 	if err := unmarshal(response, &depthResponse.Offers); err != nil {
-		return err
+		errCh <- err
+		return
 	}
 	ch <- depthResponse
-	return nil
 }
 
-func (y *Yobit) TradesLimited(pairs string, limit int, ch chan<- TradesResponse) error {
+func (y *Yobit) TradesLimited(pairs string, limit int, ch chan<- TradesResponse, errCh chan<- error) {
 	start := time.Now()
 	tradesLimitedUrl := fmt.Sprintf("%s/trades/%s?limit=%d", apiBase+ApiVersion, pairs, limit)
 	response, err := y.callPublic(tradesLimitedUrl)
 	if err != nil {
-		return err
+		errCh <- err
+		return
 	}
 
 	var tradesResponse TradesResponse
 	if err := unmarshal(response, &tradesResponse.Trades); err != nil {
-		return err
+		errCh <- err
+		return
 	}
 	if y.logger {
 		elapsed := time.Since(start)
 		log.Printf("Yobit.Trades took %s", elapsed)
 	}
 	ch <- tradesResponse
-	return nil
 }
 
 // PRIVATE TRADE API =================================================================================
 
-func (y *Yobit) GetInfo(ch chan<- GetInfoResponse) error {
+func (y *Yobit) GetInfo(ch chan<- GetInfoResponse, errCh chan<- error) {
 	start := time.Now()
 	response, err := y.callPrivate("getInfo")
 	if err != nil {
-		return err
+		errCh <- err
+		return
 	}
 
 	if y.logger {
@@ -238,20 +244,21 @@ func (y *Yobit) GetInfo(ch chan<- GetInfoResponse) error {
 	}
 	var getInfoResp GetInfoResponse
 	if err := unmarshal(response, &getInfoResp); err != nil {
-		return err
+		errCh <- err
+		return
 	}
 	if getInfoResp.Success == 0 {
-		return errors.New(getInfoResp.Error)
+		errCh <- errors.New(getInfoResp.Error)
 	}
 	ch <- getInfoResp
-	return nil
 }
 
-func (y *Yobit) ActiveOrders(pair string, ch chan<- ActiveOrdersResponse) error {
+func (y *Yobit) ActiveOrders(pair string, ch chan<- ActiveOrdersResponse, errCh chan<- error) {
 	start := time.Now()
 	response, err := y.callPrivate("ActiveOrders", CallArg{"pair", pair})
 	if err != nil {
-		return err
+		errCh <- err
+		return
 	}
 
 	if y.logger {
@@ -260,20 +267,22 @@ func (y *Yobit) ActiveOrders(pair string, ch chan<- ActiveOrdersResponse) error 
 	}
 	var activeOrders ActiveOrdersResponse
 	if err := unmarshal(response, &activeOrders); err != nil {
-		return err
+		errCh <- err
+		return
 	}
 	if activeOrders.Success == 0 {
-		return errors.New(activeOrders.Error)
+		errCh <- errors.New(activeOrders.Error)
+		return
 	}
 	ch <- activeOrders
-	return nil
 }
 
-func (y *Yobit) OrderInfo(orderId string, ch chan<- OrderInfoResponse) error {
+func (y *Yobit) OrderInfo(orderId string, ch chan<- OrderInfoResponse, errCh chan<- error) {
 	start := time.Now()
 	response, err := y.callPrivate("OrderInfo", CallArg{"order_id", orderId})
 	if err != nil {
-		return err
+		errCh <- err
+		return
 	}
 
 	if y.logger {
@@ -282,16 +291,17 @@ func (y *Yobit) OrderInfo(orderId string, ch chan<- OrderInfoResponse) error {
 	}
 	var orderInfo OrderInfoResponse
 	if err := unmarshal(response, &orderInfo); err != nil {
-		return err
+		errCh <- err
+		return
 	}
 	if orderInfo.Success == 0 {
-		return errors.New(orderInfo.Error)
+		errCh <- errors.New(orderInfo.Error)
+		return
 	}
 	ch <- orderInfo
-	return nil
 }
 
-func (y *Yobit) Trade(pair string, tradeType string, rate float64, amount float64, ch chan TradeResponse) error {
+func (y *Yobit) Trade(pair string, tradeType string, rate float64, amount float64, ch chan TradeResponse, errCh chan<- error) {
 	start := time.Now()
 	response, err := y.callPrivate("Trade",
 		CallArg{"pair", pair},
@@ -300,7 +310,8 @@ func (y *Yobit) Trade(pair string, tradeType string, rate float64, amount float6
 		CallArg{"amount", strconv.FormatFloat(amount, 'f', 8, 64)},
 	)
 	if err != nil {
-		return err
+		errCh <- err
+		return
 	}
 
 	if y.logger {
@@ -309,20 +320,22 @@ func (y *Yobit) Trade(pair string, tradeType string, rate float64, amount float6
 	}
 	var tradeResponse TradeResponse
 	if err := unmarshal(response, &tradeResponse); err != nil {
-		return err
+		errCh <- err
+		return
 	}
 	if tradeResponse.Success == 0 {
-		return errors.New(tradeResponse.Error)
+		errCh <- errors.New(tradeResponse.Error)
+		return
 	}
 	ch <- tradeResponse
-	return nil
 }
 
-func (y *Yobit) CancelOrder(orderId string, ch chan CancelOrderResponse) error {
+func (y *Yobit) CancelOrder(orderId string, ch chan CancelOrderResponse, errCh chan<- error) {
 	start := time.Now()
 	response, err := y.callPrivate("CancelOrder", CallArg{"order_id", orderId})
 	if err != nil {
-		return err
+		errCh <- err
+		return
 	}
 
 	if y.logger {
@@ -331,33 +344,36 @@ func (y *Yobit) CancelOrder(orderId string, ch chan CancelOrderResponse) error {
 	}
 	var cancelResponse CancelOrderResponse
 	if err := unmarshal(response, &cancelResponse); err != nil {
-		return err
+		errCh <- err
+		return
 	}
 	if cancelResponse.Success == 0 {
-		return errors.New(cancelResponse.Error)
+		errCh <- errors.New(cancelResponse.Error)
+		return
 	}
 	ch <- cancelResponse
-	return nil
 }
 
-func (y *Yobit) TradeHistory(pair string, ch chan<- TradeHistoryResponse) error {
+func (y *Yobit) TradeHistory(pair string, ch chan<- TradeHistoryResponse, errCh chan<- error) {
 	response, err := y.callPrivate("TradeHistory",
 		CallArg{"pair", pair},
 		CallArg{"count", "1000"},
 	)
 	if err != nil {
-		return err
+		errCh <- err
+		return
 	}
 
 	var tradeHistory TradeHistoryResponse
 	if err := unmarshal(response, &tradeHistory); err != nil {
-		return err
+		errCh <- err
+		return
 	}
 	if tradeHistory.Success == 0 {
-		return errors.New(tradeHistory.Error)
+		errCh <- errors.New(tradeHistory.Error)
+		return
 	}
 	ch <- tradeHistory
-	return nil
 }
 
 func unmarshal(data []byte, obj interface{}) error {
