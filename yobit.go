@@ -249,7 +249,7 @@ func (y *Yobit) OrderInfo(orderId string, ch chan<- OrderInfoResponse) {
 	ch <- orderInfo
 }
 
-func (y *Yobit) Trade(pair string, tradeType string, rate float64, amount float64, ch chan TradeResponse) {
+func (y *Yobit) Trade(pair string, tradeType string, rate float64, amount float64) (*TradeResponse, error) {
 	start := time.Now()
 	response := y.callPrivate("Trade",
 		CallArg{"pair", pair},
@@ -261,14 +261,14 @@ func (y *Yobit) Trade(pair string, tradeType string, rate float64, amount float6
 	if y.logger {
 		log.Printf("Yobit.Trade took %s", elapsed)
 	}
-	var tradeResponse TradeResponse
+	var tradeResponse *TradeResponse
 	if err := unmarshal(response, &tradeResponse); err != nil {
-		fatal(err)
+		return nil, err
 	}
 	if tradeResponse.Success == 0 {
-		fatal(errors.New(tradeResponse.Error))
+		return nil, errors.New(tradeResponse.Error)
 	}
-	ch <- tradeResponse
+	return tradeResponse, nil
 }
 
 func (y *Yobit) CancelOrder(orderId string, ch chan CancelOrderResponse) {
