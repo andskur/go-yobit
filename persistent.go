@@ -37,12 +37,12 @@ type LocalStorage struct {
 	db *leveldb.DB
 }
 
-func NewStorage() *LocalStorage {
+func NewStorage() (*LocalStorage, error) {
 	ldb, err := leveldb.OpenFile("data/db", nil)
 	if err != nil {
-		fatal(err)
+		return nil, err
 	}
-	return &LocalStorage{db: ldb}
+	return &LocalStorage{db: ldb}, nil
 }
 
 func (s *LocalStorage) Release() {

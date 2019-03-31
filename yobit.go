@@ -33,7 +33,6 @@ import (
 	"log"
 	"net/http"
 	"net/url"
-	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -49,6 +48,11 @@ const (
 	apiTrade   = Url + "/tapi/"
 )
 
+// errors
+var (
+	errTicketEmpty = errors.New("tickers24: Tickers list is empty")
+)
+
 type Yobit struct {
 	site       *url.URL
 	client     *http.Client
@@ -59,31 +63,34 @@ type Yobit struct {
 	logger     bool
 }
 
-func fatal(v ...interface{}) {
-	fmt.Printf("%s\n", fmt.Sprint(v))
-	os.Exit(1)
-}
-
-func New(credential ApiCredential, logger bool) *Yobit {
+func New(credential ApiCredential, logger bool) (*Yobit, error) {
 	cloudflare, err := scraper.NewTransport(http.DefaultTransport)
 	if err != nil {
-		fatal(err)
+		return nil, err
 	}
 
-	yobitUrl, _ := url.Parse(Url)
+	yobitUrl, err := url.Parse(Url)
+	if err != nil {
+		return nil, err
+	}
+
+	storage, err := NewStorage()
+	if err != nil {
+		return nil, err
+	}
 
 	yobit := Yobit{
 		site:       yobitUrl,
 		client:     &http.Client{Transport: cloudflare, Jar: cloudflare.Cookies, Timeout: time.Second * 10},
 		credential: &credential,
-		store:      NewStorage(),
+		store:      storage,
 		logger:     logger,
 	}
 	yobit.LoadCookies()
 	yobit.PassCloudflare()
 	yobit.SaveCookies()
 
-	return &yobit
+	return &yobit, nil
 }
 
 func (y *Yobit) Release() {
@@ -121,186 +128,236 @@ func (y *Yobit) PassCloudflare() {
 
 // PUBLIC API ===============================
 
-func (y *Yobit) Tickers24(pairs []string, ch chan<- TickerInfoResponse) {
+func (y *Yobit) Tickers24(pairs []string, ch chan<- TickerInfoResponse) error {
 	if len(pairs) == 0 {
-		fatal("Tickers24: Tickers list is empty")
+		return errTicketEmpty
 	}
 	pairsLine := strings.Join(pairs, "-")
 	start := time.Now()
 	ticker24Url := apiBase + ApiVersion + "/ticker/" + pairsLine
-	response := y.callPublic(ticker24Url)
+	response, err := y.callPublic(ticker24Url)
+	if err != nil {
+		return err
+	}
 
 	var tickerResponse TickerInfoResponse
 	pTicker := &tickerResponse.Tickers
 
 	if err := unmarshal(response, pTicker); err != nil {
-		fatal(err)
+		return err
 	}
-	elapsed := time.Since(start)
 	if y.logger {
+		elapsed := time.Since(start)
 		log.Printf("Yobit.Tickers24 took %s", elapsed)
 	}
 	ch <- tickerResponse
+	return nil
 }
 
-func (y *Yobit) Info(ch chan<- InfoResponse) {
+func (y *Yobit) Info(ch chan<- InfoResponse) error {
 	start := time.Now()
 	infoUrl := apiBase + ApiVersion + "/info"
-	response := y.callPublic(infoUrl)
-	elapsed := time.Since(start)
+	response, err := y.callPublic(infoUrl)
+	if err != nil {
+		return err
+	}
+
 	if y.logger {
+		elapsed := time.Since(start)
 		log.Printf("Yobit.Info took %s", elapsed)
 	}
 
 	var infoResponse InfoResponse
 	if err := unmarshal(response, &infoResponse); err != nil {
-		fatal(err)
+		return err
 	}
 	// cache all markets
 	y.pairs = infoResponse.Pairs
 
 	ch <- infoResponse
+	return nil
 }
 
-func (y *Yobit) Depth(pairs string, ch chan<- DepthResponse) {
-	y.DepthLimited(pairs, 150, ch)
+func (y *Yobit) Depth(pairs string, ch chan<- DepthResponse) (err error) {
+	err = y.DepthLimited(pairs, 150, ch)
+	return
 }
 
-func (y *Yobit) DepthLimited(pairs string, limit int, ch chan<- DepthResponse) {
+func (y *Yobit) DepthLimited(pairs string, limit int, ch chan<- DepthResponse) error {
 	start := time.Now()
 	limitedDepthUrl := fmt.Sprintf("%s/depth/%s?limit=%d", apiBase+ApiVersion, pairs, limit)
-	response := y.callPublic(limitedDepthUrl)
-	elapsed := time.Since(start)
+	response, err := y.callPublic(limitedDepthUrl)
+	if err != nil {
+		return err
+	}
+
 	if y.logger {
+		elapsed := time.Since(start)
 		log.Printf("Yobit.Depth took %s", elapsed)
 	}
 	var depthResponse DepthResponse
 	if err := unmarshal(response, &depthResponse.Offers); err != nil {
-		fatal(err)
+		return err
 	}
 	ch <- depthResponse
+	return nil
 }
 
-func (y *Yobit) TradesLimited(pairs string, limit int, ch chan<- TradesResponse) {
+func (y *Yobit) TradesLimited(pairs string, limit int, ch chan<- TradesResponse) error {
 	start := time.Now()
 	tradesLimitedUrl := fmt.Sprintf("%s/trades/%s?limit=%d", apiBase+ApiVersion, pairs, limit)
-	response := y.callPublic(tradesLimitedUrl)
+	response, err := y.callPublic(tradesLimitedUrl)
+	if err != nil {
+		return err
+	}
+
 	var tradesResponse TradesResponse
 	if err := unmarshal(response, &tradesResponse.Trades); err != nil {
-		fatal(err)
+		return err
 	}
-	elapsed := time.Since(start)
 	if y.logger {
+		elapsed := time.Since(start)
 		log.Printf("Yobit.Trades took %s", elapsed)
 	}
 	ch <- tradesResponse
+	return nil
 }
 
 // PRIVATE TRADE API =================================================================================
 
-func (y *Yobit) GetInfo(ch chan<- GetInfoResponse) {
+func (y *Yobit) GetInfo(ch chan<- GetInfoResponse) error {
 	start := time.Now()
-	response := y.callPrivate("getInfo")
-	elapsed := time.Since(start)
+	response, err := y.callPrivate("getInfo")
+	if err != nil {
+		return err
+	}
+
 	if y.logger {
+		elapsed := time.Since(start)
 		log.Printf("Yobit.GetInfo took %s", elapsed)
 	}
 	var getInfoResp GetInfoResponse
 	if err := unmarshal(response, &getInfoResp); err != nil {
-		fatal(err)
+		return err
 	}
 	if getInfoResp.Success == 0 {
-		fatal(errors.New(getInfoResp.Error))
+		return errors.New(getInfoResp.Error)
 	}
 	ch <- getInfoResp
+	return nil
 }
 
-func (y *Yobit) ActiveOrders(pair string, ch chan<- ActiveOrdersResponse) {
+func (y *Yobit) ActiveOrders(pair string, ch chan<- ActiveOrdersResponse) error {
 	start := time.Now()
-	response := y.callPrivate("ActiveOrders", CallArg{"pair", pair})
-	elapsed := time.Since(start)
+	response, err := y.callPrivate("ActiveOrders", CallArg{"pair", pair})
+	if err != nil {
+		return err
+	}
+
 	if y.logger {
+		elapsed := time.Since(start)
 		log.Printf("Yobit.ActiveOrders took %s", elapsed)
 	}
 	var activeOrders ActiveOrdersResponse
 	if err := unmarshal(response, &activeOrders); err != nil {
-		fatal(err)
+		return err
 	}
 	if activeOrders.Success == 0 {
-		fatal(errors.New(activeOrders.Error))
+		return errors.New(activeOrders.Error)
 	}
 	ch <- activeOrders
+	return nil
 }
 
-func (y *Yobit) OrderInfo(orderId string, ch chan<- OrderInfoResponse) {
+func (y *Yobit) OrderInfo(orderId string, ch chan<- OrderInfoResponse) error {
 	start := time.Now()
-	response := y.callPrivate("OrderInfo", CallArg{"order_id", orderId})
-	elapsed := time.Since(start)
+	response, err := y.callPrivate("OrderInfo", CallArg{"order_id", orderId})
+	if err != nil {
+		return err
+	}
+
 	if y.logger {
+		elapsed := time.Since(start)
 		log.Printf("Yobit.OrderInfo took %s", elapsed)
 	}
 	var orderInfo OrderInfoResponse
 	if err := unmarshal(response, &orderInfo); err != nil {
-		fatal(err)
+		return err
 	}
 	if orderInfo.Success == 0 {
-		fatal(errors.New(orderInfo.Error))
+		return errors.New(orderInfo.Error)
 	}
 	ch <- orderInfo
+	return nil
 }
 
-func (y *Yobit) Trade(pair string, tradeType string, rate float64, amount float64) (*TradeResponse, error) {
+func (y *Yobit) Trade(pair string, tradeType string, rate float64, amount float64, ch chan TradeResponse) error {
 	start := time.Now()
-	response := y.callPrivate("Trade",
+	response, err := y.callPrivate("Trade",
 		CallArg{"pair", pair},
 		CallArg{"type", tradeType},
 		CallArg{"rate", strconv.FormatFloat(rate, 'f', 8, 64)},
 		CallArg{"amount", strconv.FormatFloat(amount, 'f', 8, 64)},
 	)
-	elapsed := time.Since(start)
+	if err != nil {
+		return err
+	}
+
 	if y.logger {
+		elapsed := time.Since(start)
 		log.Printf("Yobit.Trade took %s", elapsed)
 	}
-	var tradeResponse *TradeResponse
+	var tradeResponse TradeResponse
 	if err := unmarshal(response, &tradeResponse); err != nil {
-		return nil, err
+		return err
 	}
 	if tradeResponse.Success == 0 {
-		return nil, errors.New(tradeResponse.Error)
+		return errors.New(tradeResponse.Error)
 	}
-	return tradeResponse, nil
+	ch <- tradeResponse
+	return nil
 }
 
-func (y *Yobit) CancelOrder(orderId string, ch chan CancelOrderResponse) {
+func (y *Yobit) CancelOrder(orderId string, ch chan CancelOrderResponse) error {
 	start := time.Now()
-	response := y.callPrivate("CancelOrder", CallArg{"order_id", orderId})
-	elapsed := time.Since(start)
+	response, err := y.callPrivate("CancelOrder", CallArg{"order_id", orderId})
+	if err != nil {
+		return err
+	}
+
 	if y.logger {
+		elapsed := time.Since(start)
 		log.Printf("Yobit.CancelOrder took %s", elapsed)
 	}
 	var cancelResponse CancelOrderResponse
 	if err := unmarshal(response, &cancelResponse); err != nil {
-		fatal(err)
+		return err
 	}
 	if cancelResponse.Success == 0 {
-		fatal(errors.New(cancelResponse.Error))
+		return errors.New(cancelResponse.Error)
 	}
 	ch <- cancelResponse
+	return nil
 }
 
-func (y *Yobit) TradeHistory(pair string, ch chan<- TradeHistoryResponse) {
-	response := y.callPrivate("TradeHistory",
+func (y *Yobit) TradeHistory(pair string, ch chan<- TradeHistoryResponse) error {
+	response, err := y.callPrivate("TradeHistory",
 		CallArg{"pair", pair},
 		CallArg{"count", "1000"},
 	)
+	if err != nil {
+		return err
+	}
+
 	var tradeHistory TradeHistoryResponse
 	if err := unmarshal(response, &tradeHistory); err != nil {
-		fatal(err)
+		return err
 	}
 	if tradeHistory.Success == 0 {
-		fatal(errors.New(tradeHistory.Error))
+		return errors.New(tradeHistory.Error)
 	}
 	ch <- tradeHistory
+	return nil
 }
 
 func unmarshal(data []byte, obj interface{}) error {
@@ -317,23 +374,23 @@ func unmarshal(data []byte, obj interface{}) error {
 	return err
 }
 
-func (y *Yobit) query(req *http.Request) []byte {
+func (y *Yobit) query(req *http.Request) (response []byte, err error) {
 	resp, err := y.client.Do(req)
 	if err != nil {
-		fatal("Do: ", err)
+		return nil, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		fatal(fmt.Errorf("%s\nSomething goes wrong. HTTP%d", req.URL.String(), resp.StatusCode))
+		return nil, fmt.Errorf("%s\nSomething goes wrong. HTTP%d", req.URL.String(), resp.StatusCode)
 	}
-	response, _ := ioutil.ReadAll(resp.Body)
-	return response
+	response, err = ioutil.ReadAll(resp.Body)
+	return
 }
 
-func (y *Yobit) callPublic(url string) []byte {
+func (y *Yobit) callPublic(url string) ([]byte, error) {
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
-		fatal("NewRequest: ", err)
+		return nil, err
 	}
 	return y.query(req)
 }
@@ -342,8 +399,11 @@ type CallArg struct {
 	name, value string
 }
 
-func (y *Yobit) callPrivate(method string, args ...CallArg) []byte {
-	nonce := y.GetAndIncrementNonce()
+func (y *Yobit) callPrivate(method string, args ...CallArg) ([]byte, error) {
+	nonce, err := y.GetAndIncrementNonce()
+	if err != nil {
+		return nil, err
+	}
 	form := url.Values{
 		"method": {method},
 		"nonce":  {strconv.FormatUint(nonce, 10)},
@@ -356,13 +416,12 @@ func (y *Yobit) callPrivate(method string, args ...CallArg) []byte {
 	body := bytes.NewBufferString(encode)
 	req, err := http.NewRequest("POST", apiTrade, body)
 	if err != nil {
-		fatal(err)
+		return nil, err
 	}
 
 	req.Header.Add("Content-type", "application/x-www-form-urlencoded")
 	req.Header.Add("Key", y.credential.Key)
 	req.Header.Add("Sign", signature)
 
-	query := y.query(req)
-	return query
+	return y.query(req)
 }

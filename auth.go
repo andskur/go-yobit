@@ -28,7 +28,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha512"
 	"encoding/hex"
-	"fmt"
+	"errors"
 	"io/ioutil"
 	"os"
 	"strconv"
@@ -38,47 +38,54 @@ const (
 	nonceFile = "data/nonce"
 )
 
-func (y *Yobit) GetAndIncrementNonce() (nonce uint64) {
+var (
+	errREadNonceFile = errors.New("nonce file read error")
+)
+
+func (y *Yobit) GetAndIncrementNonce() (nonce uint64, err error) {
 	y.mutex.Lock()
 	defer y.mutex.Unlock()
-	nonce = readNonce()
-	incrementNonce(&nonce)
+	nonce, err = readNonce()
+	if err != nil {
+		return
+	}
+	err = incrementNonce(&nonce)
 	return
 }
 
-func readNonce() (nonce uint64) {
-	CreateNonceFileIfNotExists()
-	data, e := ioutil.ReadFile(nonceFile)
-	if e != nil {
-		panic(fmt.Errorf("nonce file read error"))
+func readNonce() (nonce uint64, err error) {
+	if err = CreateNonceFileIfNotExists(); err != nil {
+		return
 	}
-	nonce, conErr := strconv.ParseUint(string(data), 10, 64)
-	if conErr != nil {
-		panic(conErr)
+	data, err := ioutil.ReadFile(nonceFile)
+	if err != nil {
+		return 0, errREadNonceFile
 	}
+	nonce, err = strconv.ParseUint(string(data), 10, 64)
+	return
+}
+func WriteNonce(data []byte) (err error) {
+	err = ioutil.WriteFile(nonceFile, data, 0644)
 	return
 }
 
-func WriteNonce(data []byte) {
-	if err := ioutil.WriteFile(nonceFile, data, 0644); err != nil {
-		panic(err)
-	}
-}
-
-func incrementNonce(nonceOld *uint64) {
+func incrementNonce(nonceOld *uint64) (err error) {
 	*nonceOld = *nonceOld + 1
 	ns := strconv.FormatUint(*nonceOld, 10)
-	WriteNonce([]byte(ns))
+	err = WriteNonce([]byte(ns))
+	return
 }
 
-func CreateNonceFileIfNotExists() {
-	if _, err := os.Stat(nonceFile); os.IsNotExist(err) {
+func CreateNonceFileIfNotExists() (err error) {
+	if _, err = os.Stat(nonceFile); os.IsNotExist(err) {
 		if _, err = os.Create(nonceFile); err != nil {
-			panic(err)
+			return err
 		}
 		d1 := []byte("1")
-		WriteNonce(d1)
+		err = WriteNonce(d1)
+		return
 	}
+	return err
 }
 
 func signHmacSha512(secret []byte, message []byte) (digest string) {
